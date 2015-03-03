@@ -3,6 +3,7 @@ $mailboxserver = "exch1"
 $smtpserver = "exch1"
 $From = "Exch1@domain.local"
 $To = "it@domain.local"
+$date = Get-Date -Format M-d-yy
 
 Add-PSSnapin *exchange* -erroraction SilentlyContinue
 
@@ -12,6 +13,7 @@ ForEach($user in $userlist)
 {
   $mailbox = New-Object PSObject -Property @{
     DisplayName = $null
+    UsesDBDefaults = $null
     TotalItemSize = $null
     ProhibitSendQuota = $null
     ProhibitSendReceiveQuota = $null
@@ -22,6 +24,7 @@ ForEach($user in $userlist)
     PercentUsedFmt = $null
     }
     $mailbox.DisplayName = ($user).DisplayName
+    $mailbox.UsesDBDefaults = ($user).UseDatabaseQuotaDefaults
     $mailbox.TotalItemSize = if ( (Get-MailboxStatistics -Identity $user).TotalItemSize.Value) {
         (Get-MailboxStatistics -Identity $user).TotalItemSize.Value.ToMB()
         } else {"-"}
@@ -46,16 +49,21 @@ ForEach($user in $userlist)
         (Get-MailboxDatabase -Identity $user.Database).ProhibitSendReceiveQuota.Value.ToMB()
         } else {"-"}
 
-    $mailbox.PercentUsed = if ( (Get-Mailbox $user).ProhibitSendReceiveQuota.Value) {
-        (Get-MailboxStatistics -Identity $user).TotalItemSize.Value.ToMB() / (Get-Mailbox $user).ProhibitSendReceiveQuota.Value.ToMB()
+    $mailbox.PercentUsed = 
+        if ( (Get-Mailbox $user).UseDatabaseQuotaDefaults -eq $true ) {
+            if ( (Get-MailboxDatabase -Identity $user.Database).ProhibitSendReceiveQuota.Value) {
+                (Get-MailboxStatistics -Identity $user).TotalItemSize.Value.ToMB() / (Get-MailboxDatabase -Identity $user.Database).ProhibitSendReceiveQuota.Value.ToMB()
+           } else {"-"}
         } else {
-        (Get-MailboxStatistics -Identity $user).TotalItemSize.Value.ToMB() / (Get-MailboxDatabase -Identity $user.Database).ProhibitSendReceiveQuota.Value.ToMB()
+            if ( (Get-Mailbox $user).ProhibitSendReceiveQuota.Value) {
+                (Get-MailboxStatistics -Identity $user).TotalItemSize.Value.ToMB() / (Get-Mailbox $user).ProhibitSendReceiveQuota.Value.ToMB()
+            } else {"-"}
         }
+
     $mailbox.PercentUsedFmt = "{0:P0}" -f $mailbox.PercentUsed
     $masterlist += $mailbox
 }
 
-$date = Get-Date -Format M-d-yy
 $Header = @"
 <style>
 TABLE {border:#000 1px solid; border-collapse: collapse;}
@@ -66,6 +74,6 @@ TD {border:#000 1px solid; padding: 5px; font-family:sans-serif;font-size:10pt;c
 Mailbox Size Report
 </title>
 "@
-$masterlist | select-object DisplayName, PercentUsedFmt, TotalItemSize, ProhibitSendQuota, ProhibitSendReceiveQuota, IssueWarningQuota, DBProhibitSendQuota, DBProhibitSendReceiveQuota | sort-object { [INT]($_.PercentUsedFmt -replace '%')  } -Descending | ConvertTo-Html -Head $Header | Set-Content c:\scripts\mailbox_sizes_$date.htm
+$masterlist | select-object DisplayName, PercentUsedFmt, UsesDBDefaults, TotalItemSize, ProhibitSendQuota, ProhibitSendReceiveQuota, IssueWarningQuota, DBProhibitSendQuota, DBProhibitSendReceiveQuota | sort-object { [INT]($_.PercentUsedFmt -replace '%')  } -Descending | ConvertTo-Html -Head $Header | Set-Content c:\scripts\mailbox_sizes_$date.htm
 $body = Get-Content c:\scripts\mailbox_sizes_$date.htm | Out-String
 Send-MailMessage -From $From -To $To -Subject "Mailbox Sizes $date" -SmtpServer $smtpserver -Body $body -BodyAsHtml
